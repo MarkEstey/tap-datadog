@@ -1,0 +1,10 @@
+name: tap-datadog
+channels:
+  - conda-forge
+dependencies:
+  - python==3.12.*
+  - poetry
+  - pip
+  - pip:
+    - meltano
+    - singer-sdk==0.54.*

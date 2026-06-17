@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "tap-datadog"
+version = "0.1.0"
+description = "`tap-datadog` is a Singer tap for Datadog, built with the Meltano Singer SDK."
+readme = "README.md"
+authors = ["Mark Estey"]
+keywords = [
+    "ELT",
+    "Datadog",
+]
+license = "Apache-2.0"
+packages = [
+    { include = "tap_datadog" },
+]
+
+[tool.poetry.dependencies]
+python = "<3.13,>=3.10"
+singer-sdk = "~=0.54"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+# CLI declaration
+tap-datadog = 'tap_datadog.tap:TapDatadog.cli'
