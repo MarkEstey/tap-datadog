@@ -6,9 +6,10 @@ class TapDatadog(Tap):
     name = 'tap-datadog'
 
     config_jsonschema = PropertiesList(
-        Property('url_base', StringType, default='https://api.datadoghq.com', description='Base url for the Datadog API'),
+        Property('url_base', StringType, default='https://api.datadoghq.com', description='Base url for the Datadog API. Default: https://api.datadoghq.com'),
         Property('api_key', StringType, required=True, secret=True, description='API key (see: https://docs.datadoghq.com/account_management/api-app-keys/#api-keys)'),
         Property('application_key', StringType, secret=True, description='Application key (see: https://docs.datadoghq.com/account_management/api-app-keys/#application-keys)'),
+        Property('max_incremental_pages', IntegerType, default=2, description='Maximum number of pages to read from incremental endpoints in a single sync. Default: 0 (unlimited)'),
         Property('start_date', DateTimeType, default='2010-01-01T00:00:00Z', description='The earliest record date to sync'),
         Property(
             'stream_type_conformance',

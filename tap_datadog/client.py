@@ -1,5 +1,5 @@
-import math
 import json
+import math
 
 from singer_sdk.authenticators import APIAuthenticatorBase
 from singer_sdk.helpers._typing import TypeConformanceLevel
@@ -23,8 +23,6 @@ class DatadogAuthenticator(APIAuthenticatorBase):
 
 class DatadogStream(RESTStream):
     records_jsonpath = '$.data[*]'
-    replication_key_jsonpath = None
-    sort_attribute = None
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -43,17 +41,6 @@ class DatadogStream(RESTStream):
     def authenticator(self):
         return DatadogAuthenticator(self.config['api_key'], self.config.get('application_key'))
 
-    def get_url_params(self, context, next_page_token):
-        params = super().get_url_params(context, next_page_token)
-
-        if self.replication_key:
-            params['filter[from]'] = self.get_starting_timestamp(context).isoformat()
-
-        if self.sort_attribute:
-            params['sort'] = self.sort_attribute
-
-        return params
-
     def parse_response(self, response):
         warnings = response.json().get('warnings', [])
 
@@ -61,16 +48,6 @@ class DatadogStream(RESTStream):
             self.logger.warning(f"API warning: {json.dumps(warning)}", extra=warning)
 
         return super().parse_response(response)
-
-    # Meltano SDK does not support nested replication keys, see: https://github.com/meltano/sdk/issues/1198
-    def post_process(self, row, context):
-        row = super().post_process(row, context)
-
-        # Clone value from replication_key_jsonpath to top level as _replication_timestamp
-        if self.replication_key_jsonpath:
-            row['_replication_timestamp'] = next(extract_jsonpath(self.replication_key_jsonpath, row), None)
-
-        return row
 
     # Datadog API Rate Limit, see: https://docs.datadoghq.com/api/latest/rate-limits/
     def backoff_wait_generator(self):
@@ -81,7 +58,7 @@ class DatadogStream(RESTStream):
         return self.backoff_runtime(value=_backoff_from_headers)
 
 class DatadogPageStream(DatadogStream):
-    page_size = None
+    page_size = 100
 
     def get_new_paginator(self):
         return PageNumberPaginator(start_value=0)
@@ -89,8 +66,7 @@ class DatadogPageStream(DatadogStream):
     def get_url_params(self, context, next_page_token):
         params = super().get_url_params(context, next_page_token)
 
-        if self.page_size:
-            params['page[size]'] = self.page_size
+        params['page[size]'] = self.page_size
 
         if next_page_token:
             params['page[number]'] = next_page_token
@@ -98,23 +74,67 @@ class DatadogPageStream(DatadogStream):
         return params
 
 class DatadogCursorPaginator(BaseAPIPaginator):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, max_incremental_pages=None, *args, **kwargs):
         super().__init__(start_value=None, *args, **kwargs)
+        self.pages_remaining = max_incremental_pages
 
     def get_next(self, response):
         return next(extract_jsonpath('$.meta.page.after', response.json()), None)
 
     def has_more(self, response):
+        # Note: This may not be a perfect indicator of number of pages actually read, but method is typically called once per page
+        if self.pages_remaining is not None:
+            self.pages_remaining -= 1
+            if self.pages_remaining <= 0:
+                return False
+
         return self.get_next(response) is not None
 
 class DatadogCursorStream(DatadogStream):
+    replication_key_jsonpath = None
+    sort_attribute = None
+
     def get_new_paginator(self):
-        return DatadogCursorPaginator()
+        if self.config['max_incremental_pages'] == 0:
+            return DatadogCursorPaginator()
+        else:
+            return DatadogCursorPaginator(max_incremental_pages=self.config['max_incremental_pages'])
 
     def get_url_params(self, context, next_page_token):
         params = super().get_url_params(context, next_page_token)
+
+        params['page[limit]'] = 1000
+
+        if self.replication_key:
+            params['filter[from]'] = self.get_starting_timestamp(context).isoformat()
+
+        if self.sort_attribute:
+            params['sort'] = self.sort_attribute
 
         if next_page_token:
             params['page[cursor]'] = next_page_token
 
         return params
+
+    # Meltano SDK does not support nested replication keys, see: https://github.com/meltano/sdk/issues/1198
+    def post_process(self, row, context):
+        row = super().post_process(row, context)
+
+        # Clone value from replication_key_jsonpath to top level as _replication_timestamp
+        if self.replication_key_jsonpath:
+            replication_timestamp = next(extract_jsonpath(self.replication_key_jsonpath, row), None)
+
+            if replication_timestamp:
+                # Incremental stream state only uses literal string comparison (see: https://github.com/meltano/sdk/issues/2753)
+                # This doesn't work with mixed precision timestamps i.e: '2000-01-01T00:00:00.001Z' is smaller than '2000-01-01T00:00:00Z' as strings but not as timestamps
+                # Reformat lower precision timestamp strings to fix state sort check
+                if len(replication_timestamp) > 19 and replication_timestamp[19] != '.':
+                    replication_timestamp = replication_timestamp[:19] + '.000' + replication_timestamp[19:]
+
+                row['_replication_timestamp'] = replication_timestamp
+
+        return row
+
+    @property
+    def is_sorted(self):
+        return bool(self.sort_attribute)

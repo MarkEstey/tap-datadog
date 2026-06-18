@@ -22,6 +22,7 @@ plugins:
     - { name: url_base, kind: string }
     - { name: api_key, kind: string, sensitive: true }
     - { name: application_key, kind: string, sensitive: true }
+    - { name: max_incremental_pages, kind: integer }
     - { name: start_date, kind: date_iso8601 }
     - { name: stream_type_conformance, kind: string }
     - { name: stream_maps, kind: object }
